@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Phở Dash — Chơi là có quà</title>
+<style>
+  :root{
+    /* ====== PHỞ'S BRAND PALETTE ======
+       PLACEHOLDER values — swap with the hex codes from the Canva POSM specs.
+       Everything in the page derives from these variables. */
+    --brand-red:#b02e20;
+    --brand-red-dk:#7e1f15;
+    --brand-cream:#f7e7c5;
+    --brand-green:#59a84c;
+    --brand-dark:#2a1610;
+    --brand-dark2:#170c07;
+    --gold:#f6c453;
+    /* ================================= */
+    --mono:"Consolas","Courier New",monospace;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%; margin:0;}
+  body{
+    font-family:var(--mono);
+    color:var(--brand-cream);
+    background:
+      radial-gradient(900px 600px at 50% -10%, #3d2013 0%, transparent 60%),
+      linear-gradient(170deg, var(--brand-dark), var(--brand-dark2));
+    overflow:hidden;
+    -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none;
+    touch-action:none;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  /* ---------- Arcade cabinet ---------- */
+  .cab{
+    width:min(96vw, 560px);
+    max-height:98vh;
+    background:linear-gradient(180deg, #3a1f12, var(--brand-dark2));
+    border:2px solid var(--brand-red);
+    border-radius:18px;
+    box-shadow:0 24px 60px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.07);
+    padding:10px 14px 12px;
+    display:flex; flex-direction:column;
+  }
+  .cab.shake{animation:shake .35s linear;}
+  @keyframes shake{
+    0%,100%{transform:translate(0,0)}
+    20%{transform:translate(-5px,2px)}
+    40%{transform:translate(5px,-2px)}
+    60%{transform:translate(-4px,-1px)}
+    80%{transform:translate(3px,1px)}
+  }
+
+  .marquee{text-align:center; padding:8px 0 10px;}
+  .marquee h1{
+    margin:0; font-size:clamp(20px,5.5vw,28px); font-weight:900;
+    letter-spacing:.35em; text-indent:.35em; color:var(--brand-cream);
+    text-shadow:0 0 14px rgba(176,46,32,.85), 0 2px 0 rgba(0,0,0,.4);
+  }
+  .marquee .sub{
+    margin-top:3px; font-size:10px; font-weight:700;
+    letter-spacing:.28em; text-indent:.28em; color:var(--brand-green);
+  }
+
+  /* ---------- Screen ---------- */
+  .screen{
+    position:relative;
+    border-radius:12px;
+    border:10px solid var(--brand-dark2);
+    outline:2px solid var(--brand-red-dk);
+    overflow:hidden;
+    background:#000;
+    flex:0 1 auto;
+  }
+  canvas#game{
+    display:block; width:100%; height:auto;
+    image-rendering:pixelated; image-rendering:crisp-edges;
+  }
+  .scanlines{
+    position:absolute; inset:0; pointer-events:none; z-index:2;
+    background:repeating-linear-gradient(180deg,
+      rgba(0,0,0,.16) 0px, rgba(0,0,0,.16) 1px,
+      transparent 1px, transparent 3px);
+    mix-blend-mode:multiply;
+  }
+  .vignette{
+    position:absolute; inset:0; pointer-events:none; z-index:2;
+    background:radial-gradient(120% 100% at 50% 45%, transparent 62%, rgba(23,12,7,.45) 100%);
+  }
+  .hitflash{
+    position:absolute; inset:0; pointer-events:none; z-index:3;
+    background:rgba(176,46,32,.42); opacity:0; transition:opacity .35s ease;
+  }
+  .hitflash.on{opacity:1; transition:none;}
+
+  .banner{
+    position:absolute; left:50%; top:26%; transform:translateX(-50%);
+    z-index:3; pointer-events:none; white-space:nowrap;
+    font-weight:900; font-size:15px; letter-spacing:.1em;
+    color:var(--gold); text-shadow:0 2px 0 rgba(0,0,0,.6);
+    opacity:0;
+  }
+  .banner.show{animation:bannerIn 2.2s ease forwards;}
+  @keyframes bannerIn{
+    0%{opacity:0; transform:translateX(-50%) scale(.6)}
+    12%{opacity:1; transform:translateX(-50%) scale(1.15)}
+    22%{transform:translateX(-50%) scale(1)}
+    80%{opacity:1}
+    100%{opacity:0}
+  }
+
+  /* ---------- Overlays (inside game screen) ---------- */
+  .overlay{
+    position:absolute; inset:0; z-index:4;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; gap:6px; padding:10px;
+    background:rgba(23,12,7,.86);
+  }
+  .overlay[hidden]{display:none;}
+  .overlay .big{
+    font-size:clamp(17px,4.6vw,24px); font-weight:900; letter-spacing:.14em; text-indent:.14em;
+    color:var(--gold); text-shadow:0 3px 0 rgba(0,0,0,.5);
+  }
+  .overlay .info{font-size:11.5px; line-height:1.55; color:var(--brand-cream);}
+  .overlay .info b{color:#fff;}
+  .overlay .dim{font-size:11px; color:#c9a98a;}
+  button.btn{
+    font-family:var(--mono); font-weight:900; font-size:14px;
+    letter-spacing:.2em; text-indent:.2em;
+    color:var(--brand-cream); background:linear-gradient(180deg,#c94534,var(--brand-red));
+    border:0; border-radius:10px; padding:11px 24px; margin-top:5px;
+    box-shadow:0 4px 0 var(--brand-red-dk), 0 8px 18px rgba(0,0,0,.45);
+    cursor:pointer;
+  }
+  button.btn:active{transform:translateY(3px); box-shadow:0 1px 0 var(--brand-red-dk);}
+  button.btn.green{background:linear-gradient(180deg,#6dbd5e,var(--brand-green)); box-shadow:0 4px 0 #35682c, 0 8px 18px rgba(0,0,0,.45);}
+  button.btn.green:active{box-shadow:0 1px 0 #35682c;}
+  .linkish{
+    background:none; border:0; color:var(--brand-green); font-family:var(--mono);
+    font-size:11.5px; text-decoration:underline; cursor:pointer; margin-top:4px;
+  }
+  @keyframes pop{0%{transform:scale(1)}45%{transform:scale(1.25)}100%{transform:scale(1)}}
+
+  /* floating score popups */
+  .fpop{
+    position:absolute; z-index:3; pointer-events:none;
+    font-weight:900; font-size:13px; text-shadow:0 2px 0 rgba(0,0,0,.55);
+    animation:frise .8s ease-out forwards;
+  }
+  @keyframes frise{
+    0%{transform:translate(-50%,0); opacity:0}
+    15%{opacity:1}
+    100%{transform:translate(-50%,-46px); opacity:0}
+  }
+
+  /* ---------- HUD ---------- */
+  .hud{
+    display:flex; align-items:center; gap:12px;
+    padding:12px 6px 4px; font-weight:900; font-size:13px;
+    letter-spacing:.12em;
+  }
+  .hud .lbl{color:#c9a98a; font-size:11px; margin-right:6px;}
+  .hud .val{color:#fff;}
+  #hud-score{color:var(--gold);}
+  #hud-time{color:var(--brand-green);}
+  #hud-time.low{color:#ff6b5e; animation:pop 1s ease infinite;}
+  .lives span{font-size:14px; margin-right:1px;}
+  .lives span.off{filter:grayscale(1); opacity:.3;}
+  .hud .spacer{flex:1;}
+  #btn-pause{
+    font-family:var(--mono); font-weight:900; font-size:14px; line-height:1;
+    color:var(--brand-cream); background:var(--brand-red-dk); border:2px solid var(--brand-red);
+    border-radius:8px; width:38px; height:34px; cursor:pointer;
+  }
+  #btn-pause:active{transform:translateY(2px);}
+
+  .pills{display:flex; gap:10px; justify-content:center; padding:10px 0 2px;}
+  .pills i{width:44px; height:9px; border-radius:99px; display:block;}
+  .pills i:nth-child(1){background:var(--brand-red);}
+  .pills i:nth-child(2){background:var(--brand-cream);}
+  .pills i:nth-child(3){background:var(--brand-green);}
+
+  /* ---------- Full-screen sheets (claim / voucher / admin) ---------- */
+  .sheet{
+    position:fixed; inset:0; z-index:50;
+    background:linear-gradient(170deg, var(--brand-dark), var(--brand-dark2));
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:18px; gap:10px; text-align:center;
+    overflow-y:auto;
+  }
+  .sheet[hidden]{display:none;}
+  .sheet h2{margin:0; font-size:18px; letter-spacing:.12em; color:var(--gold);}
+  .sheet .note{font-size:11.5px; color:#c9a98a; line-height:1.5;}
+
+  .field{width:min(86vw,320px); text-align:left;}
+  .field label{display:block; font-size:11px; letter-spacing:.1em; color:#c9a98a; margin:8px 0 4px;}
+  .field input{
+    width:100%; font-family:var(--mono); font-size:16px; font-weight:700;
+    color:var(--brand-dark); background:var(--brand-cream);
+    border:2px solid var(--brand-red); border-radius:10px; padding:11px 12px;
+    -webkit-user-select:text; user-select:text;
+  }
+  .field input:focus{outline:3px solid rgba(246,196,83,.5);}
+  .err{font-size:11px; color:#ff8a7a; min-height:14px;}
+
+  /* voucher card */
+  .vcard{
+    width:min(88vw,340px);
+    background:var(--brand-cream); color:var(--brand-dark);
+    border-radius:16px; overflow:hidden; text-align:center;
+    box-shadow:0 18px 44px rgba(0,0,0,.55);
+  }
+  .vcard .vhead{
+    background:var(--brand-red); color:var(--brand-cream);
+    padding:12px; font-weight:900; letter-spacing:.22em; text-indent:.22em; font-size:15px;
+  }
+  .vcard .vbody{padding:14px 16px 16px;}
+  .vcard .voffer{font-size:15px; font-weight:900; line-height:1.4; color:var(--brand-red);}
+  .vcard .vcode{
+    margin:10px auto 6px; padding:10px 8px; width:100%;
+    border:2px dashed var(--brand-red); border-radius:10px;
+    font-size:26px; font-weight:900; letter-spacing:.12em; color:var(--brand-dark);
+    background:#fffdf6;
+  }
+  .vcard .vmeta{font-size:11px; line-height:1.6; color:#6b4a33;}
+  .vcard .vstatus{
+    margin-top:10px; font-weight:900; font-size:13px; color:var(--brand-green);
+  }
+  .vcard.used{filter:grayscale(.85); opacity:.75;}
+  .vcard.used .vstatus{color:#8a2015;}
+
+  .cashier{
+    width:min(88vw,340px); margin-top:4px;
+    border-top:1px dashed #6b4a33; padding-top:10px;
+  }
+  .cashier .who{font-size:10px; letter-spacing:.2em; color:#c9a98a; margin-bottom:6px;}
+  #btn-redeem{
+    position:relative; overflow:hidden;
+    width:100%; font-family:var(--mono); font-weight:900; font-size:14px;
+    letter-spacing:.2em; color:var(--brand-cream);
+    background:var(--brand-red-dk); border:2px solid var(--brand-red);
+    border-radius:12px; padding:14px; cursor:pointer;
+  }
+  #btn-redeem .fill{
+    position:absolute; inset:0; width:0%;
+    background:rgba(89,168,76,.55); transition:none;
+  }
+  #btn-redeem .txt{position:relative; z-index:1;}
+  #btn-redeem[disabled]{opacity:.45;}
+
+  /* admin */
+  .admin-list{
+    width:min(94vw,520px); max-height:52vh; overflow:auto;
+    background:rgba(0,0,0,.3); border:1px solid var(--brand-red-dk); border-radius:10px;
+  }
+  .admin-list table{width:100%; border-collapse:collapse; font-size:11px;}
+  .admin-list th,.admin-list td{padding:6px 8px; border-bottom:1px solid rgba(176,46,32,.25); text-align:left; white-space:nowrap;}
+  .admin-list th{color:var(--gold); position:sticky; top:0; background:var(--brand-dark);}
+  .admin-list td.used{color:var(--brand-green);}
+  .stats{font-size:12.5px; color:var(--brand-cream);}
+  .stats b{color:var(--gold);}
+</style>
+</head>
+<body>
+
+<div class="cab" id="cab">
+  <div class="marquee">
+    <h1>PHỞ DASH</h1>
+    <div class="sub">PHỞ'S · CHƠI LÀ CÓ QUÀ</div>
+  </div>
+
+  <div class="screen" id="screen">
+    <canvas id="game" width="320" height="240"></canvas>
+    <div class="scanlines"></div>
+    <div class="vignette"></div>
+    <div class="hitflash" id="hitflash"></div>
+    <div class="banner" id="banner">🎉 ĐỦ ĐIỂM NHẬN QUÀ!</div>
+
+    <div class="overlay" id="ov-start">
+      <div class="big">PHỞ DASH</div>
+      <div class="info">
+        Hứng 🌿 <b>+1</b> · 🥩 <b>+2</b> · 🥤 <b>+5</b><br/>
+        Né <b>con ruồi</b> — trúng là mất 1 🌶!<br/>
+        Đạt <b>20 điểm</b> → <b>giảm 20% nước uống</b>
+      </div>
+      <button class="btn" id="btn-start">CHƠI</button>
+      <button class="linkish" id="btn-myvoucher" hidden>🎟 Xem mã đã nhận hôm nay</button>
+    </div>
+
+    <div class="overlay" id="ov-pause" hidden>
+      <div class="big">TẠM DỪNG</div>
+      <button class="btn" id="btn-resume">TIẾP TỤC</button>
+    </div>
+
+    <div class="overlay" id="ov-lose" hidden>
+      <div class="big">SUÝT NỮA RỒI!</div>
+      <div class="info" id="lose-score">0/20 điểm</div>
+      <div class="dim">Chơi lại ngay?</div>
+      <button class="btn" id="btn-retry">CHƠI LẠI</button>
+    </div>
+
+    <div class="overlay" id="ov-win" hidden>
+      <div class="big">🎉 GIẢM 20%<br/>NƯỚC UỐNG HÔM NAY</div>
+      <div class="info" id="win-score">20 điểm — quá đỉnh!</div>
+      <button class="btn green" id="btn-claim">NHẬN MÃ</button>
+    </div>
+  </div>
+
+  <div class="hud">
+    <div><span class="lbl">ĐIỂM</span><span class="val" id="hud-score">0/20</span></div>
+    <div class="lives" id="hud-lives"><span>🌶</span><span>🌶</span><span>🌶</span></div>
+    <div class="spacer"></div>
+    <div><span class="lbl">GIỜ</span><span class="val" id="hud-time">45</span></div>
+    <button id="btn-pause" title="Tạm dừng">❚❚</button>
+  </div>
+
+  <div class="pills"><i></i><i></i><i></i></div>
+</div>
+
+<!-- ---------- Claim form ---------- -->
+<div class="sheet" id="sh-claim" hidden>
+  <h2>NHẬN MÃ GIẢM GIÁ</h2>
+  <div class="note">Điền thông tin để nhận mã — chỉ mất 10 giây</div>
+  <div class="field">
+    <label for="in-name">TÊN CỦA BẠN</label>
+    <input id="in-name" type="text" autocomplete="name" maxlength="40" />
+    <label for="in-phone">SỐ ĐIỆN THOẠI (ZALO)</label>
+    <input id="in-phone" type="tel" inputmode="numeric" autocomplete="tel" maxlength="12" />
+    <div class="err" id="claim-err"></div>
+  </div>
+  <button class="btn green" id="btn-submit">LẤY MÃ NGAY</button>
+  <button class="linkish" id="btn-claim-back">Quay lại</button>
+</div>
+
+<!-- ---------- Voucher ---------- -->
+<div class="sheet" id="sh-voucher" hidden>
+  <div class="vcard" id="vcard">
+    <div class="vhead">PHỞ'S</div>
+    <div class="vbody">
+      <div class="voffer">GIẢM 20%<br/>MỌI LOẠI NƯỚC UỐNG</div>
+      <div class="vcode" id="v-code">PHOS-0000</div>
+      <div class="vmeta" id="v-meta"></div>
+      <div class="vstatus" id="v-status"></div>
+    </div>
+  </div>
+  <div class="cashier">
+    <div class="who">DÀNH CHO THU NGÂN — GIỮ NÚT 3 GIÂY</div>
+    <button id="btn-redeem"><span class="fill"></span><span class="txt">ĐÃ DÙNG</span></button>
+  </div>
+  <button class="linkish" id="btn-voucher-close">Đóng</button>
+</div>
+
+<!-- ---------- Admin (hidden route: open the page with #admin) ---------- -->
+<div class="sheet" id="sh-admin" hidden>
+  <h2>PHỞ'S · QUẢN LÝ MÃ</h2>
+  <div class="stats" id="admin-stats"></div>
+  <div class="admin-list"><table id="admin-table"></table></div>
+  <button class="btn" id="btn-csv">TẢI CSV</button>
+  <button class="linkish" id="btn-admin-close">Đóng</button>
+</div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const cv = $("#game"), ctx = cv.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+const W = cv.width, H = cv.height;
+const GROUND = H - 34;
+
+/* ================= Config ================= */
+const GAME_LEN = 45;         // seconds
+const WIN_SCORE = 20;        // points to unlock the voucher
+const STORE_ID = "PHOS-01";
+const LS_KEY = "phosVouchers";
+
+/* ================= Audio ================= */
+let AC = null;
+function ac(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function tone(freq, dur, type, vol, when){
+  const a = ac(); if(!a) return;
+  const t = a.currentTime + (when||0);
+  const o = a.createOscillator(), g = a.createGain();
+  o.type = type||"square"; o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol||0.12, t+0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  o.connect(g); g.connect(a.destination);
+  o.start(t); o.stop(t+dur+0.05);
+}
+const PENTA = [523, 587, 659, 784, 880];
+const sCatch = st => tone(PENTA[st % PENTA.length], .12, "square", .10);
+const sDrink = () => { [988,1319,1568].forEach((f,i)=>tone(f,.1,"square",.10,i*.06)); };
+const sFly   = () => { tone(140,.3,"sawtooth",.16); tone(100,.34,"square",.10,.02); };
+const sTick  = () => tone(1200,.05,"square",.05);
+const sClick = () => tone(660,.07,"square",.08);
+const sLose  = () => { tone(523,.14,"square",.10); tone(392,.14,"square",.10,.15); tone(330,.3,"square",.10,.3); };
+const sWin   = () => { [523,659,784,1047].forEach((f,i)=>tone(f,.16,"square",.10,i*.12)); };
+
+/* ================= Pixel sprites ================= */
+const PAL = {
+  W:"#fdfdf5", C:"#f7e7c5", K:"#2b2321",
+  R:"#b02e20", r:"#7e1f15", G:"#f6c453", g:"#c98f1e",
+  B:"#a8563c", b:"#7c3a28", H:"#59a84c", h:"#3d7a35",
+  Y:"#fff3a0", A:"#e8a33d", P:"#f0729d",
+};
+function bake(rows){
+  const c = document.createElement("canvas");
+  c.width = rows[0].length; c.height = rows.length;
+  const x = c.getContext("2d");
+  rows.forEach((row,j)=>{ [...row].forEach((ch,i)=>{
+    if(ch!=="."){ x.fillStyle = PAL[ch]||"#f0f"; x.fillRect(i,j,1,1); }
+  });});
+  return c;
+}
+
+/* Player: the Phở'S bowl — red bowl, cream broth, herbs on top, little legs */
+const BOWL_A = bake([
+"...HH..HH..HH...",
+"..CCCCCCCCCCCC..",
+".RRRRRRRRRRRRRR.",
+".RRRRRRRRRRRRRR.",
+".RRKKRRRRRRKKRR.",
+".RRKKRRRRRRKKRR.",
+".RRRRRRrrRRRRRR.",
+".RRRRRRRRRRRRRR.",
+"..rrrrrrrrrrrr..",
+"....rrrrrrrr....",
+".....KK..KK.....",
+".....KK..KK.....",
+"....KKK..KKK....",
+]);
+const BOWL_B = bake([
+"...HH..HH..HH...",
+"..CCCCCCCCCCCC..",
+".RRRRRRRRRRRRRR.",
+".RRRRRRRRRRRRRR.",
+".RRKKRRRRRRKKRR.",
+".RRKKRRRRRRKKRR.",
+".RRRRRRrrRRRRRR.",
+".RRRRRRRRRRRRRR.",
+"..rrrrrrrrrrrr..",
+"....rrrrrrrr....",
+"......KKKK......",
+".....KK..KK.....",
+"...KKK....KKK...",
+]);
+const PLAYER_H = 13, SCALE = 2;
+
+const HERB = bake([
+"..H..H..",
+".HHH.HH.",
+"..HHHH..",
+".HHHHHH.",
+"..hHHh..",
+"...hh...",
+"...h....",
+"...h....",
+]);
+const BEEF = bake([
+".BBBBBB.",
+"BBbBBBBB",
+"BBBBbBBB",
+"BBbBBBbB",
+".BBBBBB.",
+]);
+const DRINK = bake([
+".....P..",
+"....PP..",
+".WWWWWW.",
+".WAAAAW.",
+".WAAYAW.",
+".WAAAAW.",
+".WAAAAW.",
+"..WWWW..",
+]);
+const FLY_A = bake([
+"WW....WW",
+".WKKKKW.",
+".KKKKKK.",
+"..KKKK..",
+"...KK...",
+]);
+const FLY_B = bake([
+"........",
+"WWKKKKWW",
+".KKKKKK.",
+"..KKKK..",
+"...KK...",
+]);
+const CLOUD = bake([
+"...WWWW.....",
+".WWWWWWWW...",
+"WWWWWWWWWWWW",
+".WWWWWWWWWW.",
+]);
+
+/* Item tiers: herb +1 (60%), beef +2 (30%), drink +5 (10%, jackpot) */
+const ITEM_TYPES = [
+  {name:"herb",  spr:[HERB],        value:1, weight:60, color:"#bff0a8"},
+  {name:"beef",  spr:[BEEF],        value:2, weight:30, color:"#f0c9a8"},
+  {name:"drink", spr:[DRINK],       value:5, weight:10, color:"#f6c453"},
+  {name:"fly",   spr:[FLY_A,FLY_B], value:0, weight:0,  color:"#b02e20"},
+];
+const T = Object.fromEntries(ITEM_TYPES.map(t=>[t.name,t]));
+const GOOD = ITEM_TYPES.filter(t=>t.weight>0);
+const GOOD_TOTAL = GOOD.reduce((s,t)=>s+t.weight,0);
+
+/* ================= Game state ================= */
+let state = "menu";        // menu | play | pause | over
+let player, items, parts, score, lives, timeLeft, streak, spawnAcc, anim, lastTs, lastTickSec, milestone;
+
+function reset(){
+  player = {x:W/2, target:null, face:1, walk:0};
+  items = []; parts = [];
+  score = 0; lives = 3; timeLeft = GAME_LEN;
+  streak = 0; spawnAcc = 0; anim = 0; lastTickSec = -1; milestone = false;
+  hudScore(); hudLives(); hudTime();
+}
+
+/* ================= HUD ================= */
+function hudScore(){ $("#hud-score").textContent = score + "/" + WIN_SCORE; }
+function hudTime(){
+  const el = $("#hud-time");
+  el.textContent = Math.max(0, Math.ceil(timeLeft));
+  el.classList.toggle("low", timeLeft <= 10 && state === "play");
+}
+function hudLives(){
+  [...$("#hud-lives").children].forEach((s,i)=> s.classList.toggle("off", i >= lives));
+}
+
+/* ================= Popups ================= */
+function floatPop(txt, x, y, color){
+  const scr = $("#screen"), rect = cv.getBoundingClientRect(), k = rect.width / W;
+  const d = document.createElement("div");
+  d.className = "fpop"; d.textContent = txt; d.style.color = color;
+  d.style.left = (x*k) + "px"; d.style.top = (y*k) + "px";
+  scr.appendChild(d);
+  setTimeout(()=>d.remove(), 850);
+}
+
+/* ================= Input ================= */
+const keys = {left:false, right:false};
+addEventListener("keydown", e=>{
+  if(e.key==="ArrowLeft"||e.key==="a"||e.key==="A") keys.left = true;
+  if(e.key==="ArrowRight"||e.key==="d"||e.key==="D") keys.right = true;
+  if((e.key==="p"||e.key==="P") && (state==="play"||state==="pause")) togglePause();
+});
+addEventListener("keyup", e=>{
+  if(e.key==="ArrowLeft"||e.key==="a"||e.key==="A") keys.left = false;
+  if(e.key==="ArrowRight"||e.key==="d"||e.key==="D") keys.right = false;
+});
+function ptrX(e){
+  const rect = cv.getBoundingClientRect();
+  return (e.clientX - rect.left) / rect.width * W;
+}
+let ptrDown = false;
+const scr = $("#screen");
+scr.addEventListener("pointerdown", e=>{
+  if(state!=="play") return;
+  ptrDown = true; player.target = ptrX(e);
+  try{ scr.setPointerCapture(e.pointerId); }catch(err){}
+});
+scr.addEventListener("pointermove", e=>{ if(ptrDown && state==="play") player.target = ptrX(e); });
+const ptrUp = ()=>{ ptrDown = false; if(player) player.target = null; };
+scr.addEventListener("pointerup", ptrUp);
+scr.addEventListener("pointercancel", ptrUp);
+
+/* ================= Game flow ================= */
+function start(){
+  reset();
+  state = "play";
+  ["#ov-start","#ov-lose","#ov-win"].forEach(s=>$(s).hidden = true);
+  lastTs = undefined;
+  sClick();
+}
+function togglePause(){
+  if(state==="play"){ state="pause"; $("#ov-pause").hidden = false; }
+  else if(state==="pause"){ state="play"; $("#ov-pause").hidden = true; lastTs = undefined; }
+  sClick();
+}
+function gameOver(quiet){
+  state = "over";
+  $("#hud-time").classList.remove("low");
+  if(score >= WIN_SCORE){
+    $("#win-score").textContent = score + " điểm trong " + Math.max(1, Math.round(GAME_LEN - timeLeft)) + " giây — quá đỉnh!";
+    $("#ov-win").hidden = false;
+    if(!quiet) sWin();
+  }else{
+    $("#lose-score").textContent = score + "/" + WIN_SCORE + " điểm";
+    $("#ov-lose").hidden = false;
+    sLose();
+  }
+}
+$("#btn-start").addEventListener("click", ()=>{ ac(); start(); });
+$("#btn-retry").addEventListener("click", ()=>{ ac(); start(); });   // one-tap instant replay
+$("#btn-pause").addEventListener("click", ()=>{ if(state==="play"||state==="pause") togglePause(); });
+$("#btn-resume").addEventListener("click", togglePause);
+document.addEventListener("visibilitychange", ()=>{ if(document.hidden && state==="play") togglePause(); });
+
+/* ================= Spawning & difficulty ================= */
+const lerp = (a,b,t)=> a + (b-a)*Math.min(1,Math.max(0,t));
+function pickGood(){
+  let roll = Math.random()*GOOD_TOTAL;
+  for(const t of GOOD){ if((roll -= t.weight) < 0) return t; }
+  return GOOD[0];
+}
+function spawn(){
+  const prog = 1 - timeLeft/GAME_LEN;
+  const flyP = lerp(0.09, 0.17, prog);
+  const type = Math.random() < flyP ? T.fly : pickGood();
+  items.push({
+    t: type,
+    x: 14 + Math.random()*(W-28),
+    y: -12,
+    vy: lerp(42, 85, prog) + Math.random()*15,
+    wob: Math.random()*Math.PI*2,
+    spark: 0,
+  });
+}
+
+/* ================= Update ================= */
+const PLAYER_SPEED = 130;
+function update(dt){
+  anim += dt;
+  let dir = 0;
+  if(keys.left) dir -= 1;
+  if(keys.right) dir += 1;
+  if(player.target != null){
+    const d = player.target - player.x;
+    if(Math.abs(d) > 4) dir = Math.sign(d);
+  }
+  if(dir !== 0){ player.face = dir; player.walk += dt*10; }
+  player.x = Math.max(18, Math.min(W-18, player.x + dir*PLAYER_SPEED*dt));
+
+  timeLeft -= dt;
+  const sec = Math.ceil(timeLeft);
+  if(sec !== lastTickSec){ lastTickSec = sec; hudTime(); if(sec <= 5 && sec > 0) sTick(); }
+  if(timeLeft <= 0){ gameOver(); return; }
+
+  const prog = 1 - timeLeft/GAME_LEN;
+  spawnAcc += dt;
+  if(spawnAcc >= lerp(0.9, 0.62, prog)){ spawnAcc = 0; spawn(); }
+
+  const playerTop = GROUND - PLAYER_H*SCALE;
+  for(let i = items.length-1; i >= 0; i--){
+    const it = items[i];
+    it.y += it.vy*dt;
+    it.wob += dt*4;
+    // jackpot drink leaves a sparkle trail
+    if(it.t === T.drink){
+      it.spark -= dt;
+      if(it.spark <= 0){
+        it.spark = 0.12;
+        parts.push({x:it.x+(Math.random()*14-7), y:it.y+Math.random()*12, vx:0, vy:-14, life:.5, color:PAL.Y, spark:true});
+      }
+    }
+    const ih2 = it.t.spr[0].height * 2;
+    const reach = it.t === T.fly ? 13 : 18;
+    if(it.y + ih2 >= playerTop + 4 && it.y + ih2 < GROUND + 6 && Math.abs(it.x - player.x) < reach){
+      items.splice(i,1);
+      caught(it);
+      continue;
+    }
+    if(it.y + ih2 >= GROUND){
+      items.splice(i,1);
+      poof(it.x, GROUND-4, it.t === T.fly ? PAL.K : "#9db8a0");
+      if(it.t !== T.fly) streak = 0;
+    }
+  }
+
+  for(let i = parts.length-1; i >= 0; i--){
+    const p = parts[i];
+    p.x += p.vx*dt; p.y += p.vy*dt;
+    if(!p.spark) p.vy += 240*dt;
+    p.life -= dt;
+    if(p.life <= 0) parts.splice(i,1);
+  }
+}
+
+function caught(it){
+  if(it.t === T.fly){
+    lives--; streak = 0;
+    hudLives(); sFly();
+    floatPop("-1 🌶", player.x, GROUND-50, "#ff8a7a");
+    const cab = $("#cab"), fl = $("#hitflash");
+    cab.classList.remove("shake"); void cab.offsetWidth; cab.classList.add("shake");
+    fl.classList.add("on"); setTimeout(()=>fl.classList.remove("on"), 60);
+    poof(player.x, GROUND-30, PAL.K);
+    if(lives <= 0) gameOver();
+    return;
+  }
+  streak++;
+  score += it.t.value;
+  hudScore();
+  it.t === T.drink ? sDrink() : sCatch(streak-1);
+  floatPop("+" + it.t.value, player.x, GROUND-52, it.t.color);
+  poof(player.x, GROUND-34, it.t === T.drink ? PAL.G : PAL.C);
+  if(!milestone && score >= WIN_SCORE){
+    milestone = true;
+    state = "over";               // goal reached — stop immediately, no need to play out the clock
+    const b = $("#banner");
+    b.classList.remove("show"); void b.offsetWidth; b.classList.add("show");
+    sWin();
+    setTimeout(()=>gameOver(true), 1000);
+  }
+}
+
+function poof(x, y, color){
+  for(let i=0;i<7;i++){
+    parts.push({x, y, vx:(Math.random()-.5)*90, vy:-40-Math.random()*70, life:.4+Math.random()*.25, color});
+  }
+}
+
+/* ================= Draw ================= */
+function draw(){
+  const g = ctx.createLinearGradient(0,0,0,GROUND);
+  g.addColorStop(0,"#8ecff0"); g.addColorStop(1,"#c8e8f5");
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,GROUND);
+
+  const drift = (anim*4) % (W+80);
+  ctx.globalAlpha = .9;
+  ctx.drawImage(CLOUD, Math.round(40 + drift*0.3)% (W+40) - 20, 26, 36, 12);
+  ctx.drawImage(CLOUD, Math.round(W - 70 - drift*0.2 + W)%(W+40) - 20, 54, 30, 10);
+  ctx.drawImage(CLOUD, Math.round(150 + drift*0.15)%(W+40) - 20, 14, 26, 9);
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = "#79c46e";
+  hill(30, GROUND, 90, 34); hill(160, GROUND, 120, 46); hill(290, GROUND, 80, 28);
+  ctx.fillStyle = "#8ed381";
+  hill(-20, GROUND, 100, 24); hill(230, GROUND, 110, 20);
+
+  ctx.fillStyle = "#3f7a35"; ctx.fillRect(0, GROUND, W, H-GROUND);
+  ctx.fillStyle = "#59a84c"; ctx.fillRect(0, GROUND, W, 5);
+  ctx.fillStyle = "#356a2c";
+  for(let x=0; x<W; x+=8){ ctx.fillRect(x + (Math.floor(x/8)%2)*3, GROUND+10, 3, 3); }
+
+  for(const it of items){
+    const frames = it.t.spr;
+    const spr = frames.length > 1 ? frames[Math.floor(anim*14)%frames.length] : frames[0];
+    const wx = it.x + Math.sin(it.wob)*2;
+    if(it.t === T.drink){
+      // subtle golden halo so the jackpot stands out
+      ctx.globalAlpha = .25 + .15*Math.sin(anim*8);
+      ctx.fillStyle = PAL.G;
+      ctx.fillRect(Math.round(wx-10), Math.round(it.y-2), 20, 20);
+      ctx.globalAlpha = 1;
+    }
+    ctx.drawImage(spr, Math.round(wx - spr.width), Math.round(it.y), spr.width*2, spr.height*2);
+  }
+
+  if(player){
+    const spr = (Math.floor(player.walk)%2===0) ? BOWL_A : BOWL_B;
+    const cw = spr.width*SCALE, chh = spr.height*SCALE;
+    ctx.save();
+    ctx.translate(Math.round(player.x), GROUND);
+    if(player.face < 0) ctx.scale(-1,1);
+    ctx.drawImage(spr, -cw/2, -chh, cw, chh);
+    ctx.restore();
+  }
+
+  for(const p of parts){
+    ctx.globalAlpha = Math.max(0, p.life/.5);
+    ctx.fillStyle = p.color;
+    if(p.spark){
+      ctx.fillRect(Math.round(p.x)-1, Math.round(p.y), 3, 1);
+      ctx.fillRect(Math.round(p.x), Math.round(p.y)-1, 1, 3);
+    }else{
+      ctx.fillRect(Math.round(p.x), Math.round(p.y), 3, 3);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+function hill(cx, baseY, w, h){
+  ctx.beginPath();
+  ctx.ellipse(cx, baseY, w/2, h, 0, Math.PI, 0);
+  ctx.fill();
+}
+
+/* ================= Main loop ================= */
+function loop(ts){
+  if(lastTs === undefined) lastTs = ts;
+  const dt = Math.min((ts - lastTs)/1000, 0.05);
+  lastTs = ts;
+  if(state === "play") update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+/* ================= Voucher store (localStorage v1) =================
+   v2: POST {name, phone, score, code, timestamp, store_id} to the backend
+   and enforce one-per-phone-per-day server-side. */
+function loadVouchers(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)||"[]"); }catch(e){ return []; } }
+function saveVouchers(v){ try{ localStorage.setItem(LS_KEY, JSON.stringify(v)); }catch(e){} }
+function todayStr(){
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function genCode(existing){
+  // PHOS-XXXX: first 2 chars encode day-of-year (base36), last 2 random
+  const now = new Date();
+  const doy = Math.floor((now - new Date(now.getFullYear(),0,0)) / 864e5);
+  const d36 = doy.toString(36).toUpperCase().padStart(2,"0");
+  const R = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  let code;
+  do{
+    code = "PHOS-" + d36 + R[Math.floor(Math.random()*R.length)] + R[Math.floor(Math.random()*R.length)];
+  }while(existing.some(v=>v.code===code));
+  return code;
+}
+function normPhone(p){
+  let d = (p||"").replace(/\D/g,"");
+  if(d.startsWith("84")) d = "0" + d.slice(2);
+  return d;
+}
+function validPhone(p){ return /^0\d{8,10}$/.test(p); }
+function todaysVoucher(){
+  const today = todayStr();
+  return loadVouchers().find(v=>v.date===today) || null;   // any claim on this device today
+}
+function claimVoucher(name, phone){
+  const store = loadVouchers();
+  const today = todayStr();
+  let v = store.find(x=>x.phone===phone && x.date===today);   // one per phone per day
+  let already = !!v;
+  if(!v){
+    v = {code:genCode(store), name, phone, score, date:today,
+         ts:new Date().toISOString(), store_id:STORE_ID, redeemed_at:null};
+    store.push(v);
+    saveVouchers(store);
+  }
+  return {v, already};
+}
+
+/* ================= Screens: claim / voucher ================= */
+let currentVoucher = null;
+function show(sel){ ["#sh-claim","#sh-voucher","#sh-admin"].forEach(s=>$(s).hidden = (s!==sel)); }
+function hideSheets(){ ["#sh-claim","#sh-voucher","#sh-admin"].forEach(s=>$(s).hidden = true); }
+
+$("#btn-claim").addEventListener("click", ()=>{ $("#claim-err").textContent=""; show("#sh-claim"); });
+$("#btn-claim-back").addEventListener("click", ()=>{ hideSheets(); });
+$("#btn-submit").addEventListener("click", ()=>{
+  const name = $("#in-name").value.trim();
+  const phone = normPhone($("#in-phone").value);
+  const err = $("#claim-err");
+  if(!name){ err.textContent = "Vui lòng nhập tên"; return; }
+  if(!validPhone(phone)){ err.textContent = "Số điện thoại chưa đúng (VD: 0901234567)"; return; }
+  err.textContent = "";
+  const {v, already} = claimVoucher(name, phone);
+  showVoucher(v, already);
+  sWin();
+});
+$("#btn-voucher-close").addEventListener("click", ()=>{
+  hideSheets();
+  $("#ov-win").hidden = true; $("#ov-lose").hidden = true;
+  $("#ov-start").hidden = false;
+  refreshMyVoucherLink();
+});
+$("#btn-myvoucher").addEventListener("click", ()=>{
+  const v = todaysVoucher();
+  if(v) showVoucher(v, true);
+});
+function refreshMyVoucherLink(){ $("#btn-myvoucher").hidden = !todaysVoucher(); }
+
+function fmtTime(iso){
+  const d = new Date(iso);
+  return String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0");
+}
+function fmtDateVN(dateStr){
+  const [y,m,d] = dateStr.split("-");
+  return d + "/" + m + "/" + y;
+}
+function showVoucher(v, already){
+  currentVoucher = v;
+  $("#v-code").textContent = v.code;
+  const expired = v.date !== todayStr();
+  $("#v-meta").innerHTML =
+    v.name + " · " + v.phone + "<br/>" +
+    "Chỉ áp dụng <b>hôm nay " + fmtDateVN(v.date) + "</b> · Mỗi khách 1 mã/ngày · " + v.store_id +
+    (already && !v.redeemed_at && !expired ? "<br/><b>Bạn đã nhận mã hôm nay — đây là mã của bạn.</b>" : "");
+  renderVoucherState(expired);
+  show("#sh-voucher");
+}
+function renderVoucherState(expired){
+  const v = currentVoucher, card = $("#vcard"), st = $("#v-status"), btn = $("#btn-redeem");
+  if(v.redeemed_at){
+    card.classList.add("used");
+    st.textContent = "ĐÃ SỬ DỤNG · " + fmtTime(v.redeemed_at);
+    btn.disabled = true; btn.querySelector(".txt").textContent = "ĐÃ SỬ DỤNG";
+  }else if(expired){
+    card.classList.add("used");
+    st.textContent = "HẾT HẠN — chỉ có giá trị trong ngày";
+    btn.disabled = true; btn.querySelector(".txt").textContent = "HẾT HẠN";
+  }else{
+    card.classList.remove("used");
+    st.textContent = "✓ CHƯA SỬ DỤNG";
+    btn.disabled = false; btn.querySelector(".txt").textContent = "ĐÃ DÙNG";
+  }
+  btn.querySelector(".fill").style.width = "0%";
+}
+
+/* Cashier redemption: hold "ĐÃ DÙNG" for 3 seconds */
+const HOLD_MS = 3000;
+let holdRaf = null, holdStart = 0;
+const redeemBtn = $("#btn-redeem");
+redeemBtn.addEventListener("contextmenu", e=>e.preventDefault());
+redeemBtn.addEventListener("pointerdown", e=>{
+  if(redeemBtn.disabled || !currentVoucher || currentVoucher.redeemed_at) return;
+  try{ redeemBtn.setPointerCapture(e.pointerId); }catch(err){}
+  holdStart = performance.now();
+  const fill = redeemBtn.querySelector(".fill");
+  const tick = ()=>{
+    const p = (performance.now() - holdStart) / HOLD_MS;
+    fill.style.width = Math.min(100, p*100) + "%";
+    if(p >= 1){ holdRaf = null; redeem(); return; }
+    holdRaf = requestAnimationFrame(tick);
+  };
+  holdRaf = requestAnimationFrame(tick);
+});
+function cancelHold(){
+  if(holdRaf){ cancelAnimationFrame(holdRaf); holdRaf = null; }
+  redeemBtn.querySelector(".fill").style.width = "0%";
+}
+redeemBtn.addEventListener("pointerup", cancelHold);
+redeemBtn.addEventListener("pointercancel", cancelHold);
+redeemBtn.addEventListener("pointerleave", cancelHold);
+function redeem(){
+  const store = loadVouchers();
+  const v = store.find(x=>x.code===currentVoucher.code);
+  if(v && !v.redeemed_at){
+    v.redeemed_at = new Date().toISOString();
+    saveVouchers(store);
+    currentVoucher = v;
+  }
+  if(navigator.vibrate) navigator.vibrate(120);
+  sClick();
+  renderVoucherState(false);
+}
+
+/* ================= Admin (open page with #admin) ================= */
+function renderAdmin(){
+  const all = loadVouchers();
+  const today = todayStr();
+  const tIssued = all.filter(v=>v.date===today).length;
+  const tRedeemed = all.filter(v=>v.date===today && v.redeemed_at).length;
+  const aRedeemed = all.filter(v=>v.redeemed_at).length;
+  $("#admin-stats").innerHTML =
+    "Hôm nay: <b>" + tIssued + "</b> mã · <b>" + tRedeemed + "</b> đã dùng &nbsp;|&nbsp; " +
+    "Tổng: <b>" + all.length + "</b> mã · <b>" + aRedeemed + "</b> đã dùng";
+  const rows = all.slice().reverse().map(v=>
+    "<tr><td>" + v.code + "</td><td>" + v.name + "</td><td>" + v.phone + "</td><td>" + v.score +
+    "</td><td>" + v.date + "</td><td class='" + (v.redeemed_at?"used":"") + "'>" +
+    (v.redeemed_at ? "✓ " + fmtTime(v.redeemed_at) : "—") + "</td></tr>"
+  ).join("");
+  $("#admin-table").innerHTML =
+    "<tr><th>Mã</th><th>Tên</th><th>SĐT</th><th>Điểm</th><th>Ngày</th><th>Đã dùng</th></tr>" +
+    (rows || "<tr><td colspan='6'>Chưa có mã nào</td></tr>");
+  show("#sh-admin");
+}
+$("#btn-csv").addEventListener("click", ()=>{
+  const all = loadVouchers();
+  const head = "code,name,phone,score,date,timestamp,store_id,redeemed_at";
+  const lines = all.map(v=>[v.code,v.name,v.phone,v.score,v.date,v.ts,v.store_id,v.redeemed_at||""]
+    .map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(","));
+  const blob = new Blob(["﻿"+[head,...lines].join("\n")], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "phos-vouchers-" + todayStr() + ".csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+$("#btn-admin-close").addEventListener("click", ()=>{
+  hideSheets();
+  if(location.hash === "#admin") history.replaceState(null,"",location.pathname+location.search);
+});
+function checkAdminRoute(){ if(location.hash === "#admin") renderAdmin(); }
+addEventListener("hashchange", checkAdminRoute);
+
+/* ================= Boot ================= */
+reset();
+refreshMyVoucherLink();
+checkAdminRoute();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
