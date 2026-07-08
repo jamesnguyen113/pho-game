@@ -789,11 +789,51 @@ function loop(ts){
   requestAnimationFrame(loop);
 }
 
-/* ================= Voucher store (localStorage v1) =================
-   v2: POST {name, phone, score, code, timestamp, store_id} to the backend
-   and enforce one-per-phone-per-day server-side. */
+/* ================= Voucher store =================
+   localStorage is always the device copy (voucher redisplay works offline).
+   When the game is served from the shop server over LAN (http), claims and
+   redemptions also sync to the central SQLite DB for remarketing.
+   The github.io copy is https and cannot reach the LAN server (mixed
+   content), so there sync stays off and vouchers are device-only. */
+const API_SYNC = location.protocol === "http:";
 function loadVouchers(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)||"[]"); }catch(e){ return []; } }
 function saveVouchers(v){ try{ localStorage.setItem(LS_KEY, JSON.stringify(v)); }catch(e){} }
+
+async function apiPost(path, body){
+  const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body||{})});
+  if(!r.ok) throw new Error("api " + r.status);
+  return r.json();
+}
+// merge a server-canonical voucher into the device copy (server may have
+// changed the code on collision, or matched an earlier claim for this phone)
+function upsertLocal(v){
+  const s = loadVouchers();
+  const i = s.findIndex(x=>x.code===v.code || (x.phone===v.phone && x.date===v.date));
+  if(i>=0) s[i] = Object.assign({}, s[i], v, {pending:false});
+  else s.push(v);
+  saveVouchers(s);
+  return i>=0 ? s[i] : s[s.length-1];
+}
+// push records claimed/redeemed while the server was unreachable
+async function flushPending(){
+  if(!API_SYNC) return;
+  const s = loadVouchers();
+  let changed = false;
+  for(const v of s){
+    try{
+      if(v.pending){
+        const {voucher} = await apiPost("/api/vouchers", v);
+        Object.assign(v, voucher, {pending:false}); changed = true;
+      }
+      if(v.pending_redeem && v.redeemed_at){
+        await apiPost("/api/vouchers/" + encodeURIComponent(v.code) + "/redeem", {redeemed_at:v.redeemed_at});
+        v.pending_redeem = false; changed = true;
+      }
+    }catch(e){ break; }   // server unreachable — retry on next load / reconnect
+  }
+  if(changed) saveVouchers(s);
+}
+addEventListener("online", flushPending);
 function todayStr(){
   const d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
@@ -820,14 +860,23 @@ function todaysVoucher(){
   const today = todayStr();
   return loadVouchers().find(v=>v.date===today) || null;   // any claim on this device today
 }
-function claimVoucher(name, phone){
+async function claimVoucher(name, phone){
   const store = loadVouchers();
   const today = todayStr();
-  let v = store.find(x=>x.phone===phone && x.date===today);   // one per phone per day
+  if(API_SYNC){
+    try{
+      const {voucher, existed} = await apiPost("/api/vouchers", {
+        code: genCode(store), name, phone, score,
+        ts: new Date().toISOString(), store_id: STORE_ID
+      });
+      return {v: upsertLocal(voucher), already: existed};   // server enforces one per phone per day
+    }catch(e){ /* server unreachable — claim on device, queue for sync */ }
+  }
+  let v = store.find(x=>x.phone===phone && x.date===today);   // one per phone per day (this device)
   let already = !!v;
   if(!v){
     v = {code:genCode(store), name, phone, score, date:today,
-         ts:new Date().toISOString(), store_id:STORE_ID, redeemed_at:null};
+         ts:new Date().toISOString(), store_id:STORE_ID, redeemed_at:null, pending:API_SYNC};
     store.push(v);
     saveVouchers(store);
   }
@@ -841,16 +890,26 @@ function hideSheets(){ ["#sh-claim","#sh-voucher","#sh-admin"].forEach(s=>$(s).h
 
 $("#btn-claim").addEventListener("click", ()=>{ $("#claim-err").textContent=""; show("#sh-claim"); });
 $("#btn-claim-back").addEventListener("click", ()=>{ hideSheets(); });
-$("#btn-submit").addEventListener("click", ()=>{
+$("#btn-submit").addEventListener("click", async ()=>{
+  const btn = $("#btn-submit");
+  if(btn.disabled) return;
   const name = $("#in-name").value.trim();
   const phone = normPhone($("#in-phone").value);
   const err = $("#claim-err");
   if(!name){ err.textContent = "Vui lòng nhập tên"; return; }
   if(!validPhone(phone)){ err.textContent = "Số điện thoại chưa đúng (VD: 0901234567)"; return; }
   err.textContent = "";
-  const {v, already} = claimVoucher(name, phone);
-  showVoucher(v, already);
-  sWin();
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = "ĐANG LẤY MÃ…";
+  try{
+    const {v, already} = await claimVoucher(name, phone);
+    showVoucher(v, already);
+    sWin();
+  }finally{
+    btn.disabled = false;
+    btn.textContent = label;
+  }
 });
 $("#btn-voucher-close").addEventListener("click", ()=>{
   hideSheets();
@@ -926,29 +985,46 @@ function cancelHold(){
 redeemBtn.addEventListener("pointerup", cancelHold);
 redeemBtn.addEventListener("pointercancel", cancelHold);
 redeemBtn.addEventListener("pointerleave", cancelHold);
-function redeem(){
+async function redeem(){
   const store = loadVouchers();
   const v = store.find(x=>x.code===currentVoucher.code);
   if(v && !v.redeemed_at){
     v.redeemed_at = new Date().toISOString();
+    v.pending_redeem = API_SYNC;
     saveVouchers(store);
     currentVoucher = v;
   }
   if(navigator.vibrate) navigator.vibrate(120);
   sClick();
   renderVoucherState(false);
+  if(API_SYNC && v){
+    try{
+      const {voucher} = await apiPost("/api/vouchers/" + encodeURIComponent(v.code) + "/redeem", {redeemed_at:v.redeemed_at});
+      currentVoucher = upsertLocal(Object.assign({}, voucher, {pending_redeem:false}));
+    }catch(e){ /* stays queued via pending_redeem */ }
+  }
 }
 
 /* ================= Admin (open page with #admin) ================= */
-function renderAdmin(){
-  const all = loadVouchers();
+let adminCentral = false;
+async function renderAdmin(){
+  let all = loadVouchers(), stats = null;
+  adminCentral = false;
+  if(API_SYNC){
+    try{
+      const r = await fetch("/api/vouchers");
+      if(r.ok){ const data = await r.json(); all = data.vouchers; stats = data.stats; adminCentral = true; }
+    }catch(e){ /* server unreachable — fall back to device data */ }
+  }
   const today = todayStr();
-  const tIssued = all.filter(v=>v.date===today).length;
-  const tRedeemed = all.filter(v=>v.date===today && v.redeemed_at).length;
-  const aRedeemed = all.filter(v=>v.redeemed_at).length;
+  const tIssued = stats ? stats.today_issued : all.filter(v=>v.date===today).length;
+  const tRedeemed = stats ? stats.today_redeemed : all.filter(v=>v.date===today && v.redeemed_at).length;
+  const aIssued = stats ? stats.total_issued : all.length;
+  const aRedeemed = stats ? stats.total_redeemed : all.filter(v=>v.redeemed_at).length;
   $("#admin-stats").innerHTML =
+    (adminCentral ? "🖧 MÁY CHỦ — toàn bộ khách" : "📱 Chỉ dữ liệu trên thiết bị này") + "<br/>" +
     "Hôm nay: <b>" + tIssued + "</b> mã · <b>" + tRedeemed + "</b> đã dùng &nbsp;|&nbsp; " +
-    "Tổng: <b>" + all.length + "</b> mã · <b>" + aRedeemed + "</b> đã dùng";
+    "Tổng: <b>" + aIssued + "</b> mã · <b>" + aRedeemed + "</b> đã dùng";
   const rows = all.slice().reverse().map(v=>
     "<tr><td>" + v.code + "</td><td>" + v.name + "</td><td>" + v.phone + "</td><td>" + v.score +
     "</td><td>" + v.date + "</td><td class='" + (v.redeemed_at?"used":"") + "'>" +
@@ -960,6 +1036,7 @@ function renderAdmin(){
   show("#sh-admin");
 }
 $("#btn-csv").addEventListener("click", ()=>{
+  if(adminCentral){ location.href = "/api/vouchers/export.csv"; return; }
   const all = loadVouchers();
   const head = "code,name,phone,score,date,timestamp,store_id,redeemed_at";
   const lines = all.map(v=>[v.code,v.name,v.phone,v.score,v.date,v.ts,v.store_id,v.redeemed_at||""]
@@ -982,6 +1059,7 @@ addEventListener("hashchange", checkAdminRoute);
 reset();
 refreshMyVoucherLink();
 checkAdminRoute();
+flushPending();
 requestAnimationFrame(loop);
 </script>
 </body>
