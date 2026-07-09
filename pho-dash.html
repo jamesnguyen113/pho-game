@@ -796,8 +796,32 @@ function loop(ts){
    The github.io copy is https and cannot reach the LAN server (mixed
    content), so there sync stays off and vouchers are device-only. */
 const API_SYNC = location.protocol === "http:";
+/* Google Apps Script Web App URL (ends with /exec) — the central customer
+   sheet. HTTPS, so it works from EVERY copy of the game: github.io, LAN,
+   customers on 5G or wifi. Empty string = cloud capture off. */
+const CLOUD_API = "https://script.google.com/macros/s/AKfycbwwWo3XwOFpJurJq0GLbhwNwMGrF-mMNa0II4lvEF8DMViXI8a3Wh8YNREssNxblY5VSQ/exec";
 function loadVouchers(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)||"[]"); }catch(e){ return []; } }
 function saveVouchers(v){ try{ localStorage.setItem(LS_KEY, JSON.stringify(v)); }catch(e){} }
+function markFlag(code, flag, val){
+  const s = loadVouchers();
+  const x = s.find(y=>y.code===code);
+  if(x){ x[flag] = val; saveVouchers(s); }
+}
+// text/plain avoids a CORS preflight, which Apps Script can't answer
+async function cloudPost(body){
+  const ctrl = new AbortController();
+  const t = setTimeout(()=>ctrl.abort(), 6000);
+  try{
+    const r = await fetch(CLOUD_API, {
+      method:"POST",
+      headers:{"Content-Type":"text/plain;charset=utf-8"},
+      body: JSON.stringify(body),
+      signal: ctrl.signal
+    });
+    if(!r.ok) throw new Error("cloud " + r.status);
+    return await r.json();
+  }finally{ clearTimeout(t); }
+}
 
 async function apiPost(path, body){
   const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body||{})});
@@ -814,22 +838,38 @@ function upsertLocal(v){
   saveVouchers(s);
   return i>=0 ? s[i] : s[s.length-1];
 }
-// push records claimed/redeemed while the server was unreachable
+// push records claimed/redeemed while a sync target was unreachable;
+// each target (shop server / cloud sheet) fails independently
 async function flushPending(){
-  if(!API_SYNC) return;
+  if(!API_SYNC && !CLOUD_API) return;
   const s = loadVouchers();
-  let changed = false;
+  let changed = false, lanDown = !API_SYNC, cloudDown = !CLOUD_API;
   for(const v of s){
-    try{
-      if(v.pending){
-        const {voucher} = await apiPost("/api/vouchers", v);
-        Object.assign(v, voucher, {pending:false}); changed = true;
-      }
-      if(v.pending_redeem && v.redeemed_at){
-        await apiPost("/api/vouchers/" + encodeURIComponent(v.code) + "/redeem", {redeemed_at:v.redeemed_at});
-        v.pending_redeem = false; changed = true;
-      }
-    }catch(e){ break; }   // server unreachable — retry on next load / reconnect
+    if(!lanDown){
+      try{
+        if(v.pending){
+          const {voucher} = await apiPost("/api/vouchers", v);
+          Object.assign(v, voucher, {pending:false}); changed = true;
+        }
+        if(v.pending_redeem && v.redeemed_at){
+          await apiPost("/api/vouchers/" + encodeURIComponent(v.code) + "/redeem", {redeemed_at:v.redeemed_at});
+          v.pending_redeem = false; changed = true;
+        }
+      }catch(e){ lanDown = true; }
+    }
+    if(!cloudDown){
+      try{
+        if(v.pending_cloud){
+          await cloudPost(v);
+          v.pending_cloud = false; changed = true;
+        }
+        if(v.pending_cloud_redeem && v.redeemed_at){
+          await cloudPost({action:"redeem", code:v.code, redeemed_at:v.redeemed_at});
+          v.pending_cloud_redeem = false; changed = true;
+        }
+      }catch(e){ cloudDown = true; }
+    }
+    if(lanDown && cloudDown) break;
   }
   if(changed) saveVouchers(s);
 }
@@ -863,22 +903,41 @@ function todaysVoucher(){
 async function claimVoucher(name, phone){
   const store = loadVouchers();
   const today = todayStr();
+  const claim = {code:genCode(store), name, phone, score,
+                 ts:new Date().toISOString(), store_id:STORE_ID};
+  let v = null, already = false, viaLan = false;
+
+  // 1) shop server first when on LAN — it enforces one per phone per day
   if(API_SYNC){
     try{
-      const {voucher, existed} = await apiPost("/api/vouchers", {
-        code: genCode(store), name, phone, score,
-        ts: new Date().toISOString(), store_id: STORE_ID
-      });
-      return {v: upsertLocal(voucher), already: existed};   // server enforces one per phone per day
-    }catch(e){ /* server unreachable — claim on device, queue for sync */ }
+      const {voucher, existed} = await apiPost("/api/vouchers", claim);
+      v = upsertLocal(voucher); already = existed; viaLan = true;
+    }catch(e){ /* shop server unreachable */ }
   }
-  let v = store.find(x=>x.phone===phone && x.date===today);   // one per phone per day (this device)
-  let already = !!v;
+  // 2) cloud sheet — the path for customers on 5G / the github.io copy
+  if(!v && CLOUD_API){
+    try{
+      const {voucher, existed} = await cloudPost(claim);
+      if(voucher){
+        v = upsertLocal(voucher); already = existed;
+        if(API_SYNC) markFlag(v.code, "pending", true);   // still owe the shop server a copy
+      }
+    }catch(e){ /* cloud unreachable */ }
+  }
+  // 3) device-only fallback — queue for whichever sync targets exist
   if(!v){
-    v = {code:genCode(store), name, phone, score, date:today,
-         ts:new Date().toISOString(), store_id:STORE_ID, redeemed_at:null, pending:API_SYNC};
-    store.push(v);
-    saveVouchers(store);
+    v = store.find(x=>x.phone===phone && x.date===today);
+    already = !!v;
+    if(!v){
+      v = Object.assign({}, claim, {date:today, redeemed_at:null,
+           pending:API_SYNC, pending_cloud:!!CLOUD_API});
+      store.push(v);
+      saveVouchers(store);
+    }
+  }else if(viaLan && CLOUD_API && !already){
+    // LAN claim also recorded in the cloud sheet (the master remarketing list)
+    try{ await cloudPost(v); }
+    catch(e){ markFlag(v.code, "pending_cloud", true); }
   }
   return {v, already};
 }
@@ -1002,6 +1061,12 @@ async function redeem(){
       const {voucher} = await apiPost("/api/vouchers/" + encodeURIComponent(v.code) + "/redeem", {redeemed_at:v.redeemed_at});
       currentVoucher = upsertLocal(Object.assign({}, voucher, {pending_redeem:false}));
     }catch(e){ /* stays queued via pending_redeem */ }
+  }
+  if(CLOUD_API && v){
+    try{
+      await cloudPost({action:"redeem", code:v.code, redeemed_at:v.redeemed_at});
+      markFlag(v.code, "pending_cloud_redeem", false);
+    }catch(e){ markFlag(v.code, "pending_cloud_redeem", true); }
   }
 }
 
